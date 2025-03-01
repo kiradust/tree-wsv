@@ -1,0 +1,13 @@
+numpy
+POT
+scipy
+spams==2.6.5.0
+tqdm==4.62.3
+treelib==1.6.1
+joblib
+networkx
+scikit-learn
+scanpy
+torch
+treelib
+jax
