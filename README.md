@@ -1,6 +1,6 @@
 # Tree Wasserstein singular vectors
 
-This is repository for the ICLR 2025 paper [Fast unsupervised ground metric learning with tree-Wasserstein distance](https://openreview.net/forum?id=FBhKUXK7od). We embed data matrices on trees and leverage the tree-Wasserstein distance to efficiently learn ground metrics for both samples and features!
+Here is the minimal code for the algorithms detailed in the ICLR 2025 paper [Fast unsupervised ground metric learning with tree-Wasserstein distance](https://openreview.net/forum?id=FBhKUXK7od). We embed data matrices on trees and leverage the tree-Wasserstein distance to efficiently learn ground metrics for both samples and features!
 
 ![image](https://github.com/user-attachments/assets/d79b3887-c653-4fa5-b2ce-5a6a3029c3d4)
 
