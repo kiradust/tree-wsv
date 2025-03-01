@@ -6,7 +6,7 @@ This is repository for the ICLR 2025 paper [Fast unsupervised ground metric lear
 
 ## Related and modified repositories
 1. We have modified parts of the [``treeOT`` repository](https://github.com/oist/treeOT?tab=readme-ov-file) from [Approximating 1-Wasserstein Distance with Trees](https://openreview.net/forum?id=Ig82l87ZVU), in particular the ClusterTree algorithm (to allow initialisation based on a custom input distance metric).
-2. Interested users are also encouraged to review the [``wsingular`` repository](https://github.com/CSDUlm/wsingular) from [Unsupervised Ground Metric Learning Using Wasserstein Singular Vectors](https://proceedings.mlr.press/v162/huizing22a/huizing22a.pdf) - we compare our results to the standard Wasserstein Singular Vector and Sinkhorn Singular Vector algorithms implemented here on a genomics PBMC dataset that was shared by the authors.
+2. Interested users are also encouraged to review the [``wsingular`` repository](https://github.com/CSDUlm/wsingular) from [Unsupervised Ground Metric Learning Using Wasserstein Singular Vectors](https://proceedings.mlr.press/v162/huizing22a/huizing22a.pdf). We include and attribute parts of this code in ``tree-wsv.`` In particular, we compare our results to the standard Wasserstein Singular Vector and Sinkhorn Singular Vector algorithms implemented by Huizing et al. on a genomics PBMC dataset that was shared by the authors.
 
 ## Set-up
 Once you have cloned the repository, set up a virtual environment using the listed requirements.
