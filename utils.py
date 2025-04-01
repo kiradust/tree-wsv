@@ -1,7 +1,5 @@
-import pandas as pd
-from typing import Iterable, Tuple
+from typing import Tuple
 from sklearn.metrics import silhouette_score
-from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
@@ -19,37 +17,13 @@ import pickle as pkl
 from scipy.sparse.linalg import svds
 from jax import vmap, random
 
-def random_distance(size: int, dtype: str, device: str) -> torch.Tensor:
-    """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)
-    Return a random distance-like matrix, i.e. symmetric with zero diagonal. The matrix is also divided by its maximum, so as to have infty norm 1.
-
-    Args:
-        size (int): Will return a matrix of dimensions size*size
-        dtype (str): The dtype to be returned
-        device (str): The device to be returned
-
-    Returns:
-        torch.Tensor: The random distance-like matrix
-    """
-    # Create a random matrix.
-    D = torch.rand(size, size, dtype=dtype, device=device)
-
-    # Make it symmetric.
-    D = D + D.T
-
-    # Make it zero diagonal.
-    D.fill_diagonal_(0)
-
-    # Return the normalized matrix.
-    return D / D.max()
-
 def regularization_matrix(
     A: torch.Tensor,
     p: int,
     dtype: str,
     device: str,
 ) -> torch.Tensor:
-    """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)
+    """From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)
     Return the regularization matrix
 
     Args:
@@ -67,7 +41,7 @@ def regularization_matrix(
 
 
 def hilbert_distance(D_1: torch.Tensor, D_2: torch.Tensor) -> float:
-    """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)
+    """From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)
     Compute the Hilbert distance between two distance-like matrices.
 
     Args:
@@ -95,8 +69,8 @@ def hilbert_distance(D_1: torch.Tensor, D_2: torch.Tensor) -> float:
     return float((div.max() - div.min()).cpu())
 
 
-def hilbert_distance_jax(D_1, D_2) -> float:
-    """Compute the Hilbert distance between two distance-like matrices.
+def hilbert_distance_jax(D_1: jnp.ndarray, D_2: jnp.ndarray) -> float:
+    """Compute the Hilbert distance between two distance-like matrices that are Jax ndarrays.
 
     Args:
         D_1 (torch.Tensor): The first matrix
@@ -123,7 +97,7 @@ def normalize_dataset(
     normalization_steps: int = 1,
     small_value: float = 1e-6,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)
+    """From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)
     Normalize the dataset and return the normalized dataset A and the transposed dataset B.
 
     Args:
@@ -158,90 +132,8 @@ def normalize_dataset(
     return A.to(dtype=dtype, device=device), B.to(dtype=dtype, device=device)
 
 
-def check_uniqueness(A,B,C,D) -> bool:
-    """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)
-    Check uniqueness of singular vectors using the graph connectivity criterion described in the paper.
-
-    Args:
-        A (torch.Tensor): The samples.
-        B (torch.Tensor): The features.
-        C (torch.Tensor): The ground cost.
-        D (torch.Tensor): The pairwise distance.
-
-    Returns:
-        bool: Whether the criterion is verified.
-    """
-
-    # Get the shapes of pairwise distance matrices.
-    n_features, n_samples = C.shape[0], D.shape[0]
-
-    # Initialize an empty directed graph.
-    DG = nx.DiGraph()
-
-    # Add the 'ij' nodes.
-    for i in range(n_samples):
-        for j in range(n_samples):
-            DG.add_node(','.join(['ij', str(i), str(j)]))
-
-    # Add the 'kl' nodes.
-    for k in range(n_features):
-        for l in range(n_features):
-            DG.add_node(','.join(['kl', str(k), str(l)]))
-
-    # Iterate over samples.
-    for i in range(n_samples):
-        for j in range(i + 1):
-
-            # Compute the transport plan between these samples.
-            P = ot.emd(A[i].contiguous(), A[j].contiguous(), C)
-
-            # Iterate over features.
-            for k in range(n_features):
-                for l in range(n_features):
-
-                    # Fill the adjacency matrix.
-                    DG.add_weighted_edges_from([(
-                        ','.join(['ij', str(i), str(j)]),
-                        ','.join(['kl', str(k), str(l)]),
-                        P[k, l]
-                    )])
-
-                    DG.add_weighted_edges_from([(
-                        ','.join(['ij', str(j), str(i)]),
-                        ','.join(['kl', str(k), str(l)]),
-                        P[k, l]
-                    )])
-
-    # Iterate over features.
-    for k in range(n_features):
-        for l in range(k + 1):
-
-            # Compute the transport plan between these features.
-            P = ot.emd(B[k].contiguous(), B[l].contiguous(), D)
-
-            # Iterate over samples.
-            for i in range(n_samples):
-                for j in range(n_samples):
-
-                    # Fill the adjacency matrix.
-                    DG.add_weighted_edges_from([(
-                        ','.join(['kl', str(k), str(l)]),
-                        ','.join(['ij', str(i), str(j)]),
-                        P[i, j]
-                    )])
-
-                    DG.add_weighted_edges_from([(
-                        ','.join(['kl', str(l), str(k)]),
-                        ','.join(['ij', str(i), str(j)]),
-                        P[i, j]
-                    )])
-
-    # Check that there is only one connected component.
-    return len(list(nx.strongly_connected_components(DG))) == 1
-
-
 def display_cost(C,D,n_samples,n_features,name=None):
-  """From Huizing et al., 2002 (https://github.com/CSDUlm/wsingular/tree/main)"""
+    """From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)"""
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     fig.suptitle('Wasserstein Singular Vectors')
 
@@ -259,6 +151,30 @@ def display_cost(C,D,n_samples,n_features,name=None):
     else:
         plt.show()
     return
+
+def silhouette(D: jnp.array, labels) -> float:
+    """Return the average silhouette score, given a distance matrix and labels.
+    From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)
+
+    Args:
+        D (torch.Tensor): Distance matrix n*n
+        labels (Iterable): n labels
+
+    Returns:
+        float: The average silhouette score
+    """
+
+    # Perform some sanity checks.
+    assert len(D.shape) == 2  # correct shape
+    assert jnp.sum(D < 0) == 0  # positivity
+
+    return silhouette_score(D, labels, metric="precomputed")
+
+
+def timer(prev_time,comment=''):
+    print(comment,'gap: ',str(time.time()-prev_time))
+    return time.time()
+
 
 def extract_basis(matrix):
     """
@@ -306,47 +222,6 @@ def extract_basis(matrix):
     
     return basis, pivot_columns
 
-def extract_basis_sparse_svd(matrix, k=None):
-    """
-    Extract a basis for the column space of the given sparse matrix using SVD.
-    
-    Parameters:
-    matrix (scipy.sparse.csr_matrix): The input sparse matrix.
-    k (int): Number of singular values and vectors to compute. If None, compute the rank.
-    
-    Returns:
-    numpy.ndarray: A matrix whose columns form a basis for the column space of the input matrix.
-    numpy.ndarray: Indices of the columns that form the basis.
-    """
-    # Convert to CSR format if not already in that format
-    c_time = time.time()
-    if not isinstance(matrix, csr_matrix):
-        matrix = csr_matrix(matrix)
-    
-    c_time = timer(c_time,'convert to csr')
-    # Determine rank if not provided
-    if k is None:
-        k = min(matrix.shape) - 1
-    
-    # Perform sparse SVD
-    U, s, Vt = svds(matrix, k=k)
-    c_time = timer(c_time,'svd')
-    # Identify the rank of the matrix (number of non-zero singular values)
-    rank = np.sum(s > 1e-10)
-    
-    # Extract the first 'rank' columns of U as the basis
-    basis = U[:, :rank]
-    c_time = timer(c_time,'basis')
-    
-    # Find the indices of the basis columns
-    # We need to check which columns of the original matrix contribute to the basis
-    basis_indices = []
-    for i in tqdm(range(rank)):
-        dot_products = np.abs(matrix.T @ basis[:, i])
-        index = np.argmax(dot_products)
-        basis_indices.append(index)
-    
-    return basis, np.array(basis_indices)
 
 def extract_basis_sparse_lsqr(matrix):
     """
@@ -377,26 +252,6 @@ def extract_basis_sparse_lsqr(matrix):
     basis = matrix[:, basis_indices].toarray()
     return basis, np.array(basis_indices)
 
-def timer(prev_time,comment=''):
-    print(comment,'gap: ',str(time.time()-prev_time))
-    return time.time()
-
-def silhouette(D: jnp.array, labels) -> float:
-    """Return the average silhouette score, given a distance matrix and labels.
-
-    Args:
-        D (torch.Tensor): Distance matrix n*n
-        labels (Iterable): n labels
-
-    Returns:
-        float: The average silhouette score
-    """
-
-    # Perform some sanity checks.
-    assert len(D.shape) == 2  # correct shape
-    assert jnp.sum(D < 0) == 0  # positivity
-
-    return silhouette_score(D, labels, metric="precomputed")
 
 def extract_basis_sparse_svd(matrix, k=None):
     """
@@ -439,6 +294,7 @@ def extract_basis_sparse_svd(matrix, k=None):
         basis_indices.append(index)
     
     return basis, jnp.array(basis_indices)
+
 
 def extract_basis_jax_svd(matrix, k=None):
     """
@@ -493,6 +349,7 @@ def extract_basis_jax_svd(matrix, k=None):
     
     return basis, jnp.array(basis_indices)
 
+
 def normalize_dataset_jax(
     dataset: jnp.array,
     dtype: str,
@@ -532,6 +389,7 @@ def normalize_dataset_jax(
 
     return A, B
 
+
 def assert_nonzeros(dataset):
     """
     remove any rows or columns from the dataset that are all zeros
@@ -550,6 +408,7 @@ def assert_nonzeros(dataset):
         return dataset_2
     
     return dataset_2
+
 
 def tree_init(A,B,K=[4,4],D=[12,12],tree='cluster',plotting=False,cdist=[None,None]):
     c_time = time.time()
@@ -593,6 +452,7 @@ def tree_init(A,B,K=[4,4],D=[12,12],tree='cluster',plotting=False,cdist=[None,No
     
     return a_z_dense2, b_z_dense2
 
+
 def sparse_construct(b_shape,b_z_dense):
     """
     use sparse SVD method to return reduced rank matrix of tree distances
@@ -626,6 +486,7 @@ def sparse_construct(b_shape,b_z_dense):
 
     return y_b_red, b_up_tri
 
+
 def tree_xor(B,node1,node2):
   """
   B is a tree matrix of size W x N_leaf where W is the number of nodes
@@ -633,6 +494,7 @@ def tree_xor(B,node1,node2):
   """
   return B[:,node1]+B[:,node2]-2*B[:,node1]*B[:,node2]
   #return jnp.logical_xor(B[:,node1],B[:,node2])
+  
 
 def basis_tree(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
   """
@@ -697,10 +559,12 @@ def basis_tree(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
 
     return basis, rank, indices
     
+
 def basis_tree_rnd(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
   """
   Input: B, the tree matrix
   Recursively updates basis vector set and rank, then returns both
+  Allows for some randomness when there are ties between leaves
   """
   N,L = B.shape # number nodes and number leaves
   assert N > L
@@ -777,6 +641,7 @@ def basis_tree_rnd(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
 
     return basis, rank, indices
 
+
 def difference_subset(newa,ij_a,a_up_tri,b_z_dense,filename,save=True):
     """ 
     compute differences between feature vectors based on subset of indices selected
@@ -799,18 +664,6 @@ def difference_subset(newa,ij_a,a_up_tri,b_z_dense,filename,save=True):
 
     return z_ll 
 
-def decompose_into_powers_of_two(n):
-    """ what it says on the tin """
-    powers = []
-    power = 0
-    
-    while n > 0:
-        if n & 1:  # Check if the least significant bit is 1
-            powers.append(2**power)  # Include the power of 2
-        n >>= 1  # Right shift n to process the next bit
-        power += 1
-    
-    return powers
 
 def alt_twd(w,B,A):
     n_samp = A.shape[0]

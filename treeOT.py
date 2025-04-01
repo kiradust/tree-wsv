@@ -3,60 +3,55 @@ from treelib import Tree
 import copy
 from tqdm import tqdm
 import random
-import spams
 from scipy import sparse
-from scipy.sparse import csr_matrix
-import networkx as nx
-import joblib
 
 class treeOT():
-    def __init__(self, X, method='cluster', lam=0.0001,nmax=100000, k=5, d=6, n_slice=1, debug_mode=False,is_sparse=False,has_weights=True):
+    def __init__(self, X, method='cluster', lam=0.0001, nmax=100000, k=5, d=6, n_slice=1, 
+                 debug_mode=False, has_weights=True,  custom_distance=None):
         """
-        Modified from Yamada et al., 2022 (https://github.com/oist/treeOT?tab=readme-ov-file)
+        Modified from Yamada et al., 2022 (https://github.com/oist/treeOT?tab=readme-ov-file) to allow custom distance inputs
          Parameter
          ----------
          X :
-             a set of supports
+            a set of supports
          method :
-             'cluster' (clustering tree) or 'quad' (quadtree)
+            'cluster' (clustering tree) or 'quad' (quadtree)
          k : int
-             a number of child nodes
+            a number of child nodes
          d : int
-                depth of a tree
+            depth of a tree
          n_slice : int
-             the number of sampled trees
+            the number of sampled trees
          lam: float
-             the regularization parameter of Lasso
+            the regularization parameter of Lasso
          nmax: int
-             the number of training samples for Lasso
+            the number of training samples for Lasso
          has_weights: bool
-            whether or not to calculate weights (Yamada et al., 2022)
+            whether or not to calculate weights or input own
+        custom_distance: matrix or None
+            input a custom distance matrix for use with ClusterTree (otherwise, default to Euclidean distance)
          """
 
         self.n_slice = n_slice
+        self.custom_distance = custom_distance
 
         for i in tqdm(range(n_slice)):
 
             if method=='quad': #Quadtree
                 np.random.seed(i)
-
                 tree = self.build_quadtree(X, random_shift=True, width=None, origin=None)
                 print("build done")
-                #self.D1, self.D2 = self.gen_matrix(tree, X)
+
             else: #Clustering tree
                 random.seed(i)
                 tree = self.build_clustertree(X, k, d, debug_mode=debug_mode)
                 print("build done")
-                #self.D1, self.D2 = self.gen_matrix(tree, X)
 
             self.Bsp = self.get_B_matrix(tree,X)
 
             if has_weights:
-                if is_sparse:
-                    wv = self.calc_weight_sparse(X, self.Bsp, lam=lam, nmax=nmax)
-                    print(wv.shape)
-                else:
-                    wv = self.calc_weight(X,self.Bsp,lam=lam,nmax=nmax)
+                
+                wv = self.calc_weight(X,self.Bsp,lam=lam,nmax=nmax)
 
                 if i == 0:
                     wB = self.Bsp.multiply(wv)
@@ -75,6 +70,7 @@ class treeOT():
 
 
     def incremental_farthest_search(self, points, remaining_set, k, debug_mode=False):
+        """ Modified for custom distance function """
         n_points = len(remaining_set)
         remaining_set = copy.deepcopy(remaining_set)
 
@@ -90,7 +86,10 @@ class treeOT():
             distance_list = []
 
             for idx in remaining_set:
-                in_distance_list = [self.distance(points[idx], points[sol_idx]) for sol_idx in solution_set]
+                if self.custom_distance is not None:
+                    in_distance_list = [self.custom_distance[idx, sol_idx] for sol_idx in solution_set]
+                else:
+                    in_distance_list = [self.distance(points[idx], points[sol_idx]) for sol_idx in solution_set] 
                 distance_list.append(min(in_distance_list))
 
             sol_idx = remaining_set[np.argmax(distance_list)]
@@ -105,6 +104,7 @@ class treeOT():
 
 
     def grouping(self, points, remaining_set, solution_set):
+        """ Modified for custom distance function """
         np.random.seed(0)
         n_points = len(points)
         remaining_set = copy.deepcopy(remaining_set)
@@ -114,13 +114,15 @@ class treeOT():
             group.append([])
 
         for idx in remaining_set:
-            distance_list = [self.distance(points[idx], points[sol_idx]) for sol_idx in solution_set]
+            if self.custom_distance is not None:
+                distance_list = [self.custom_distance[idx, sol_idx] for sol_idx in solution_set]
+            else:
+                distance_list = [self.distance(points[idx], points[sol_idx]) for sol_idx in solution_set]
+           
             group_idx = np.argmin(distance_list)
             group[group_idx].append(idx)
 
         return group
-
-
 
     def clustering(self, points, remaining_set, k, debug_mode=False):
         solution_set = self.incremental_farthest_search(points, remaining_set, k, debug_mode=debug_mode)
@@ -154,6 +156,7 @@ class treeOT():
         """
         remaining_set = [i for i in range(len(X))]
         return self._build_clustertree(X, remaining_set, k, d, debug_mode=debug_mode)
+
 
     def _build_quadtree(self, X, origin, remaining_idx, width):
         d = X.shape[1]  # dimension
@@ -195,6 +198,7 @@ class treeOT():
 
         return tree
 
+
     def build_quadtree(self, X, random_shift=True, width=None, origin=None):
         """
         Assume that X[i] in [0, width]^d.
@@ -216,29 +220,8 @@ class treeOT():
         return self._build_quadtree(X, origin, remaining_idx, width)
 
 
-    def gen_matrix(self, tree, X):
-        n_node = len(tree.all_nodes())
-        n_leaf = X.shape[0]
-        n_in = n_node - n_leaf
-        D1 = np.zeros((n_in, n_in))
-        D2 = np.zeros((n_in, n_leaf))
-
-        in_node = [node.identifier for node in tree.all_nodes() if node.data == None]
-
-        for node in tree.all_nodes():
-            # check node is leaf or not
-            if node.data is not None:
-                parent_idx = in_node.index(tree.parent(node.identifier).identifier)
-                D2[parent_idx, node.data] = 1.0
-            elif node.identifier == tree.root:
-                continue
-            else:
-                parent_idx = in_node.index(tree.parent(node.identifier).identifier)
-                node_idx = in_node.index(node.identifier)
-                D1[parent_idx, node_idx] = 1.0
-        return D1, D2
-
     def get_B_matrix(self, tree, X):
+        """Small mods for custom distance and matrix rank algorithm compatibility"""
         n_node = len(tree.all_nodes())
         n_leaf = X.shape[0]
         n_in   = n_node - n_leaf
@@ -249,7 +232,6 @@ class treeOT():
         in_node_index = [ii for ii in range(n_in)]
         leaf_node = [node.identifier for node in tree.all_nodes() if node.data != None]
         leaf_node_index = [node.data for node in tree.all_nodes() if node.data != None]
-        #leaf_node_index = [node.data for node in tree.all_nodes() if node.data != None]
         path_leaves = tree.paths_to_leaves()
 
         n_edge = 0
@@ -258,62 +240,33 @@ class treeOT():
         col_ind = np.zeros(n_edge)
         row_ind = np.zeros(n_edge)
         cnt = 0
+
         for path in path_leaves:
             # check node is leaf or not
-            leaf_index = leaf_node_index[leaf_node.index(path[-1])]
-            #B[leaf_index,leaf_index] = 1.0
-            col_ind[cnt] = leaf_index
-            row_ind[cnt] = leaf_index
-            cnt += 1
-            for node in path[:-1]:
-                in_index = in_node_index[in_node.index(node)] + n_leaf
-                #B[in_index,leaf_index] = 1.0
+            try:
+                leaf_index = leaf_node_index[leaf_node.index(path[-1])]
+                #B[leaf_index,leaf_index] = 1.0
                 col_ind[cnt] = leaf_index
-                row_ind[cnt] = in_index
-                cnt+=1
+                row_ind[cnt] = leaf_index
+                cnt += 1
+                for node in path[:-1]:
+                    in_index = in_node_index[in_node.index(node)] + n_leaf
+                    #B[in_index,leaf_index] = 1.0
+                    col_ind[cnt] = leaf_index
+                    row_ind[cnt] = in_index
+                    cnt+=1
+            except ValueError:
+                continue
 
         B = sparse.csc_matrix((np.ones(n_edge), (row_ind, col_ind)), shape=(n_node, n_leaf), dtype='float32')
+        for i in range(n_node):
+            if i < n_leaf:
+                B[i,i] = 1
         return B
 
-    def get_B_matrix_networkx(T, root_node, nodes_tree=[]):
-        """
-        Usage:
-        #G is a Graph (networkx format)
-
-        T = nx.dfs_tree(G, root_node)
-        B,nodes_tree = get_matrix_networkx(G,root_node,nodes_tree=labels)
-        Bsp = sparse.csc_matrix(B)
-
-        :param root_node:
-        :return: B, nodes_tree
-        """
-        if len(nodes_tree) == 0:
-            nodes_tree = list(T.nodes())
-
-        dict_nodes = {}
-        ii = 0
-        for node in nodes_tree:
-            dict_nodes[node] = ii
-            ii += 1
-
-        B = np.zeros((len(nodes_tree), len(nodes_tree)))
-        ii = 0
-        for node in nodes_tree:
-            node_current = node
-            B[dict_nodes[node_current], ii] = 1
-            B[dict_nodes[root_node], ii] = 1
-            while node_current is not root_node:
-                try:
-                    node_current = list(T.predecessors(node_current))[0]
-                    B[dict_nodes[node_current], ii] = 1
-                except:
-                    node_current = root_node
-            ii += 1
-
-        return B, nodes_tree
 
     def calc_weight(self, X, B, lam=0.001, seed=0, nmax=100000):
-
+        """We do not really need this function -- modified for compatibility"""
         n_leaf, d = X.shape
         random.seed(seed)
 
@@ -338,7 +291,6 @@ class treeOT():
         n_sample = nmax
         c = np.asfortranarray(c_all[:n_sample, 0].reshape((n_sample, 1)), dtype='float32')
         Z = np.asfortranarray(Z_all[:, :n_sample].transpose(), dtype='float32')
-        Zsp = sparse.csc_matrix(Z)
 
         # Solving nonnegative Lasso
         param = {'numThreads': -1, 'verbose': True,
@@ -350,115 +302,9 @@ class treeOT():
 
         W0 = np.zeros((Z.shape[1], c.shape[1]), dtype='float32', order="F")
 
-        (W, optim_info) = spams.fistaFlat(c, Zsp, W0, True, **param)
-
-        return W
-
-    def calc_weight_in(self,X, Bsp, ind1, ind2):
-        n = len(ind1)
-        c_tmp = np.zeros(n)
-        for ii in range(n):
-            c_tmp[ii] = np.linalg.norm(X[ind1[ii], :] - X[ind2[ii], :], ord=2)
-            tmp = Bsp[:, ind1[ii]] + Bsp[:, ind2[ii]] - 2 * (Bsp[:, ind1[ii]].multiply(Bsp[:, ind2[ii]]))
-
-            if ii == 0:
-                row_ind = tmp.indices
-                col_ind = np.ones(len(row_ind)) * ii
-                data = tmp[row_ind].toarray().flatten()
-            else:
-                row_ind_tmp = tmp.indices
-                col_ind_tmp = np.ones(len(row_ind_tmp)) * ii
-                row_ind = np.concatenate((row_ind, row_ind_tmp))
-                col_ind = np.concatenate((col_ind, col_ind_tmp))
-                data = np.concatenate((data, tmp[row_ind_tmp].toarray().flatten()))
-
-        return c_tmp, col_ind, row_ind, data, len(data)
-
-    def calc_weight_sparse(self,X, Bsp, lam=0.001, seed=0, nmax=100000, b=100):
-        n_leaf, d = X.shape
-        random.seed(seed)
-
-        c_all = np.zeros((nmax, 1))
-        dz = Bsp.shape[0]
-
-        np.random.seed(seed)
-        ind1 = np.random.randint(0, n_leaf, nmax)
-        ind2 = np.random.randint(0, n_leaf, nmax)
-
-
-        # Multi process
-        result = joblib.Parallel(n_jobs=-1)(
-            joblib.delayed(self.calc_weight_in)(X, Bsp, ind1[b * i:(i + 1) * b], ind2[b * i:(i + 1) * b]) for i in
-            range(int(nmax / b)))
-
-        n_ele = 0
-        for ii in range(int(nmax / b)):
-            n_ele += result[ii][4]
-
-        col_ind = np.zeros(n_ele)
-        row_ind = np.zeros(n_ele)
-        data = np.zeros(n_ele)
-        st = 0
-        ed = result[0][4]
-        for ii in range(int(nmax / b) - 1):
-            c_all[ii * b:(ii + 1) * b, 0] = result[ii][0]
-            col_ind[st:ed] = result[ii][1] + (ii) * b
-            row_ind[st:ed] = result[ii][2]
-            data[st:ed] = result[ii][3]
-            st += result[ii][4]
-            ed += result[ii + 1][4]
-
-        ii = int(nmax / b) - 1
-        c_all[ii * b:(ii + 1) * b, 0] = result[ii][0]
-        col_ind[st:ed] = result[ii][1] + (ii) * b
-        row_ind[st:ed] = result[ii][2]
-        data[st:ed] = result[ii][3]
-
-        n_sample = nmax
-        c = np.asfortranarray(c_all[:n_sample, 0].reshape((n_sample, 1)), dtype='float32')
-
-        Zsp = sparse.csc_matrix((data, (col_ind, row_ind)), shape=(nmax, dz), dtype='float32')
-
-        # Solving nonnegative Lasso
-        param = {'numThreads': -1, 'verbose': True,
-                 'lambda1': lam, 'it0': 10, 'max_it': 2000, 'tol': 1e-3, 'intercept': False,
-                 'pos': True}
-
-        param['loss'] = 'square'
-        param['regul'] = 'l1'
-
-        W0 = np.zeros((Zsp.shape[1], c.shape[1]), dtype='float32', order="F")
-
-        (W, optim_info) = spams.fistaFlat(c, Zsp, W0, True, **param)
-
-        return W
+        return W0
 
     def calc_yall(self):
         # compute the matrix for all pairwise leaf-to-leaf distances
         y_all = (self.B_dense[:,None,:] + self.B_dense[:,:,None] - 2 * (self.B_dense[:,None,:]*(self.B_dense[:,:,None])))
         return y_all
-    
-    def calc_zall(self,A):
-        """
-        Bdense: (array)  dense connectivity histogram
-        A: (array)    rows are the histogram samples to be compared, represented on tree's leaves (num_histos x n_leaf)
-        """
-        A_diff = A[:,None,:]-A[None,:,:]
-        z_all = np.abs(np.einsum('ijn,kn->kij', A_diff, self.B_dense))
-        return z_all
-    
-    def tree_twd(self,A):
-        # compute pairwise TWD (given new weight vector)
-        if A is not None:
-            self.z_all = self.calc_zall(A)
-        
-        all_twd = np.einsum('i,ijk->jk',self.wv.T,self.z_all)
-
-        return all_twd
-
-    def pairwiseTWD(self,a,b):
-        # Compute the Tree Wasserstein
-
-        TWD = abs(self.wB.dot(a - b)).sum(0) / self.n_slice
-
-        return TWD
