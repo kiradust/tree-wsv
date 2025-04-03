@@ -268,7 +268,7 @@ def extract_basis_sparse_svd(matrix, k=None):
     # Convert to CSR format if not already in that format
     c_time = time.time()
     if not isinstance(matrix, csr_matrix):
-        matrix = csr_matrix(matrix,matrix.shape)
+        matrix = csr_matrix(matrix)
     
     c_time = timer(c_time,'convert to csr')
     # Determine rank if not provided
@@ -276,10 +276,10 @@ def extract_basis_sparse_svd(matrix, k=None):
         k = min(matrix.shape) - 1
     
     # Perform sparse SVD
-    U, s, Vt = svds(matrix, k=k, tol=1e-6,return_singular_vectors="u",solver='lobpcg')
+    U, s, Vt = svds(matrix, k=k)
     c_time = timer(c_time,'svd')
     # Identify the rank of the matrix (number of non-zero singular values)
-    rank = jnp.sum(s > 1e-10)
+    rank = np.sum(s > 1e-10)
     
     # Extract the first 'rank' columns of U as the basis
     basis = U[:, :rank]
@@ -289,11 +289,11 @@ def extract_basis_sparse_svd(matrix, k=None):
     # We need to check which columns of the original matrix contribute to the basis
     basis_indices = []
     for i in tqdm(range(rank)):
-        dot_products = jnp.abs(matrix.T @ basis[:, i])
-        index = jnp.argmax(dot_products)
+        dot_products = np.abs(matrix.T @ basis[:, i])
+        index = np.argmax(dot_products)
         basis_indices.append(index)
     
-    return basis, jnp.array(basis_indices)
+    return basis, np.array(basis_indices)
 
 
 def extract_basis_jax_svd(matrix, k=None):
@@ -453,7 +453,7 @@ def tree_init(A,B,K=[4,4],D=[12,12],tree='cluster',plotting=False,cdist=[None,No
     return a_z_dense2, b_z_dense2
 
 
-def sparse_construct(b_shape,b_z_dense):
+def sparse_construct(b_shape, b_z_dense, wvb_shape):
     """
     use sparse SVD method to return reduced rank matrix of tree distances
     Input shape of matrix (number leaves) and dense tree matrix

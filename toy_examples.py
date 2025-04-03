@@ -98,8 +98,8 @@ D_true = D
 start_tree = time.time()
 
 # construct trees -- k modifies the number of children
-btree = treeOT(B, method='cluster', lam=0.001, n_slice=1, is_sparse=False, has_weights=False, k=3, d=4)
-atree = treeOT(A, method='cluster', lam=0.001, n_slice=1, is_sparse=False, has_weights=False, k=3, d=4)
+btree = treeOT(B, method='cluster', lam=0.001, has_weights=False, k=3, d=4)
+atree = treeOT(A, method='cluster', lam=0.001, has_weights=False, k=3, d=4)
 
 # construct once-off matrices and tensors
 a_z_dense = torch.tensor(atree.Bsp.todense(), dtype=dtype).T
@@ -161,7 +161,7 @@ for k in tqdm(range(n_inner_iter)):
 
 print('time WSV-many tree: ' + str(time.time() - start_tree))
 
-# display
+# print out results
 z_bll_old = torch.einsum('kn,ijn->kij', b_z_dense.T, A_diff)
 twd_b_2 = torch.sum(torch.abs(torch.einsum('i,ijk->ijk',wvb.T.squeeze(),z_bll_old)),0)
 twd_b_phi = twd_b_2 / twd_b_2.max()
@@ -169,9 +169,6 @@ twd_b_phi = twd_b_2 / twd_b_2.max()
 z_all_old = torch.einsum('kn,ijn->kij', a_z_dense.T, B_diff)
 twd_a_2 = torch.sum(torch.abs(torch.einsum('i,ijk->ijk',wva.T.squeeze(),z_all_old)),0)
 twd_a_phi = twd_a_2 / twd_a_2.max()
-# utils.display_cost(twd_a_phi,twd_b_phi,n_samples,n_features)
 
-# print(np.linalg.norm(twd_a_phi-C_true))
-# print(np.linalg.norm(twd_b_phi-D_true))
 print('Hilbert distance cost 1:', utils.hilbert_distance(C_true,twd_a_phi))
 print('Hilbert distance cost 2:', utils.hilbert_distance(D_true,twd_b_phi))
