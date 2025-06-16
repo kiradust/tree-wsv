@@ -132,6 +132,76 @@ def normalize_dataset(
     return A.to(dtype=dtype, device=device), B.to(dtype=dtype, device=device)
 
 
+def normalize_dataset_jax(
+    dataset: jnp.array,
+    dtype: str,
+    device: str,
+    normalization_steps: int = 1,
+    small_value: float = 1e-6):
+    """Normalize the dataset and return the normalized dataset A and the transposed dataset B.
+
+    Args:
+        dataset (torch.Tensor): The input dataset, samples as rows.
+        normalization_steps (int, optional): The number of Sinkhorn normalization steps. For large numbers, we get bistochastic matrices. Defaults to 1 and should be larger or equal to 1.
+        small_value (float): Small addition to the dataset to avoid numerical errors while computing OT distances. Defaults to 1e-6.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: The normalized matrices A and B.
+    """
+
+    # Perform some sanity checks.
+    assert len(dataset.shape) == 2  # correct shape
+    assert jnp.sum(dataset < 0) == 0  # positivity
+    assert small_value > 0  # a positive numerical offset
+    assert normalization_steps > 0  # normalizing at least once
+
+    # Do a first normalization pass for A
+    A = dataset / dataset.sum(1).reshape(-1, 1)
+    A += small_value
+    A /= A.sum(1).reshape(-1, 1)
+
+    # Do a first normalization pass for B
+    B = dataset.T / dataset.T.sum(1).reshape(-1, 1)
+    B += small_value
+    B /= B.sum(1).reshape(-1, 1)
+
+    # Make any additional normalization steps.
+    for _ in range(normalization_steps - 1):
+        A, B = B.T / B.T.sum(1).reshape(-1, 1), A.T / A.T.sum(1).reshape(-1, 1)
+
+    return A, B
+
+
+def generate_torus_data(n_samples = 1000, n_features = 1000, perm=True, dtype=jnp.float32):
+    """ 
+    Generate unimodal torus data (adapted from Huizing et al., 2022)
+    Optionally permute
+    """
+    samp_arr = jnp.linspace(0,n_samples,n_samples,endpoint=False)
+    feat_arr = jnp.linspace(0,n_features,n_features,endpoint=False)
+
+    dataset = jnp.abs(samp_arr[:,None]/n_samples - feat_arr[None,:]/n_features % 1)
+
+    # iterate over the features and samples.
+    dataset = np.zeros((n_samples, n_features), dtype=dtype)
+    for i in range(n_samples):
+        for j in range(n_features):
+
+            # fill the dataset with translated histograms.
+            dataset[i, j] = i/n_samples - j/n_features
+            dataset[i, j] = abs(dataset[i, j] % 1)
+
+    # take the distance to 0 on the torus
+    dataset = jnp.fmin(dataset, 1 - dataset)
+
+    # make it a gaussian
+    dataset = jnp.exp(-(dataset)**2 / 0.1)
+
+    # define the dimensions of the problem
+    n_samples, n_features = dataset.shape
+    return dataset
+
+
 def display_cost(C,D,n_samples,n_features,name=None):
     """From Huizing et al., 2022 (https://github.com/CSDUlm/wsingular/tree/main)"""
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
@@ -265,28 +335,27 @@ def extract_basis_sparse_svd(matrix, k=None):
     numpy.ndarray: A matrix whose columns form a basis for the column space of the input matrix.
     numpy.ndarray: Indices of the columns that form the basis.
     """
-    # Convert to CSR format if not already in that format
+    # convert to CSR format if not already in that format
     c_time = time.time()
     if not isinstance(matrix, csr_matrix):
         matrix = csr_matrix(matrix)
     
     c_time = timer(c_time,'convert to csr')
-    # Determine rank if not provided
+    # determine rank if not provided
     if k is None:
         k = min(matrix.shape) - 1
     
-    # Perform sparse SVD
+    # perform sparse SVD
     U, s, Vt = svds(matrix, k=k)
     c_time = timer(c_time,'svd')
-    # Identify the rank of the matrix (number of non-zero singular values)
-    rank = np.sum(s > 1e-10)
     
-    # Extract the first 'rank' columns of U as the basis
+    # extract the first 'rank' columns of U as the basis
+    rank = np.sum(s > 1e-10)
     basis = U[:, :rank]
     c_time = timer(c_time,'basis')
     
-    # Find the indices of the basis columns
-    # We need to check which columns of the original matrix contribute to the basis
+    # find the indices of the basis columns
+    # check which columns of the original matrix contribute to the basis
     basis_indices = []
     for i in tqdm(range(rank)):
         dot_products = np.abs(matrix.T @ basis[:, i])
@@ -308,22 +377,22 @@ def extract_basis_jax_svd(matrix, k=None):
     numpy.ndarray: A matrix whose columns form a basis for the column space of the input matrix.
     numpy.ndarray: Indices of the columns that form the basis.
     """
+    from jax.experimental.sparse.linalg import lobpcg_standard
     N,M = matrix.shape 
     print(N,M)
 
-    # Convert to JAX sparse format if not already in that format
+    # convert to JAX sparse format if not already in that format
     c_time = time.time()
     if not isinstance(matrix, sparse.BCOO):
         matrix = sparse.BCOO(matrix, (N,M))
 
     c_time = timer(c_time,'convert to csr')
-    # Determine rank if not provided
+    # determine rank if not provided
     if k is None:
         k = min(N,M) - 1
     
-    # Perform sparse SVD
-
-    rng = np.random.default_rng(0)
+    # perform sparse SVD
+    rng = np.random.default_rng(0) # random seed
 
     AAT = lambda x: matrix @ matrix.T @ x
     AAT = matrix @ matrix.T
@@ -332,15 +401,15 @@ def extract_basis_jax_svd(matrix, k=None):
 
     c_time = timer(c_time,'svd')
 
-    # Identify the rank of the matrix (number of non-zero singular values)
+    # odentify the rank of the matrix (number of non-zero singular values)
     rank = jnp.sum(s > 1e-6)
     
-    # Extract the first 'rank' columns of U as the basis
+    # extract the first 'rank' columns of U as the basis
     basis = U[:, :rank]
     c_time = timer(c_time,'basis')
     
-    # Find the indices of the basis columns
-    # We need to check which columns of the original matrix contribute to the basis
+    # find the indices of the basis columns
+    # check which columns of the original matrix contribute to the basis
     basis_indices = []
     for i in tqdm(range(rank)):
         dot_products = jnp.abs(matrix.T @ basis[:, i])
@@ -359,12 +428,12 @@ def normalize_dataset_jax(
     """Normalize the dataset and return the normalized dataset A and the transposed dataset B.
 
     Args:
-        dataset (torch.Tensor): The input dataset, samples as rows.
+        dataset (jnp array): The input dataset, samples as rows.
         normalization_steps (int, optional): The number of Sinkhorn normalization steps. For large numbers, we get bistochastic matrices. Defaults to 1 and should be larger or equal to 1.
         small_value (float): Small addition to the dataset to avoid numerical errors while computing OT distances. Defaults to 1e-6.
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: The normalized matrices A and B.
+        Tuple[jnp arrays]: The normalized matrices A and B.
     """
 
     # Perform some sanity checks.
@@ -390,31 +459,35 @@ def normalize_dataset_jax(
     return A, B
 
 
-def assert_nonzeros(dataset):
+def assert_nonzeros(dataset,labels1,labels2):
     """
     remove any rows or columns from the dataset that are all zeros
     """
     if jnp.sum(dataset.sum(1) == 0) == 0: # no row is 0
         dataset_new = dataset
+        labels1_new = labels1
+        labels2_new = labels2
     else:
         dataset_0 = jnp.argwhere(dataset.sum(1) == 0)
         dataset_new = jnp.delete(dataset,dataset_0,0)
+        labels1_new = np.delete(labels1,dataset_0,0)
+        labels2_new = np.delete(labels2,dataset_0,0)
     
-    if jnp.sum(dataset_new.T.sum(1) == 0) == 0: # no row is 0
+    if jnp.sum(dataset_new.T.sum(1) == 0) == 0: # no column is 0
         dataset_2 = dataset_new
     else:
         dataset_0 = jnp.argwhere(dataset_new.T.sum(1) == 0)
         dataset_2 = jnp.delete(dataset_new.T,dataset_0,0)
-        return dataset_2
+        return dataset_2.T, labels1_new, labels2_new
     
-    return dataset_2
+    return dataset_2, labels1_new, labels2_new
 
 
 def tree_init(A,B,K=[4,4],D=[12,12],tree='cluster',plotting=False,cdist=[None,None]):
     c_time = time.time()
     # construct trees
-    btree = treeOT(B, method=tree, lam=0.001, n_slice=1, is_sparse=False, has_weights=False, k=K[0], d=D[0], custom_distance=cdist[0])
-    atree = treeOT(A, method=tree, lam=0.001, n_slice=1, is_sparse=False, has_weights=False, k=K[1], d=D[1], custom_distance=cdist[1])
+    btree = treeOT(B, method=tree, lam=0.001, n_slice=1, has_weights=False, k=K[0], d=D[0], custom_distance=cdist[0])
+    atree = treeOT(A, method=tree, lam=0.001, n_slice=1, has_weights=False, k=K[1], d=D[1], custom_distance=cdist[1])
     
     # dense matrices and weight matrix shapes from tree
     a_Bsp = atree.Bsp
@@ -485,21 +558,22 @@ def sparse_construct(b_shape, b_z_dense, wvb_shape):
     del y_bll2
 
     return y_b_red, b_up_tri
-
+  
 
 def tree_xor(B,node1,node2):
   """
   B is a tree matrix of size W x N_leaf where W is the number of nodes
   node1, node2 are the indices of the leaf nodes to be compared
   """
-  return B[:,node1]+B[:,node2]-2*B[:,node1]*B[:,node2]
-  #return jnp.logical_xor(B[:,node1],B[:,node2])
-  
+  return jnp.logical_xor(B[:,node1],B[:,node2]) 
+  #return B[:,node1]+B[:,node2]-2*B[:,node1]*B[:,node2]
+
 
 def basis_tree(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
   """
   Input: B, the tree matrix
   Recursively updates basis vector set and rank, then returns both
+  When there are ties between leaves, always takes first
   """
   N,L = B.shape # number nodes and number leaves
   assert N > L
@@ -637,6 +711,65 @@ def basis_tree_rnd(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
         ind_perm = random.permutation(key,curr_ct)
         for i in ind_perm[1:]:
             B[:,curr_leaves[i][0]] = 0
+      basis, rank, indices  = basis_tree(B,basis,rank,indices)
+
+    return basis, rank, indices
+
+
+def basis_tree_legacy(B,basis=0,rank=0,indices=[]):
+  """
+  Input: B, the tree matrix
+  Recursively updates basis vector set and rank, then returns both
+  """
+  N,L = B.shape # number nodes and number leaves
+  assert N > L
+
+  # base cases
+    
+  if N == 3:
+    # only one vector, compute and finish
+    basis[rank] = (tree_xor(B,0,1))
+    indices.append([0,1])
+    rank += 1
+    return basis, rank
+  
+  else:
+    # select (smallest) subtree that is just adjacent leaves
+    rowcts = jnp.sum(B[L:],axis=1)
+    rowcts = jnp.where(rowcts>1,rowcts,L+1)
+    
+    curr_node = jnp.argmin(rowcts)
+    curr_ct = int(rowcts[curr_node])
+    # print(curr_node,curr_ct)      
+    if curr_ct != L+1:
+      curr_leaves = np.argwhere(B[L+curr_node])
+      # print(curr_leaves)
+
+      if curr_ct == 2: # include adjacent end-leaf pair and one other
+        basis[rank] = (tree_xor(B,curr_leaves[0][0],curr_leaves[1][0]))
+        indices.append([curr_leaves[0][0],curr_leaves[1][0]])
+        rank += 1
+        if curr_leaves[0][0]+1 != curr_leaves[1][0]:
+          basis[rank] = (tree_xor(B,curr_leaves[0][0]+1,curr_leaves[1][0]))
+          indices.append([curr_leaves[0][0]+1,curr_leaves[1][0]])
+        elif curr_leaves[0][0] > 0:
+          basis[rank] = (tree_xor(B,curr_leaves[0][0]-1,curr_leaves[1][0]))
+          indices.append([curr_leaves[0][0]-1,curr_leaves[1][0]])
+        else:
+          basis[rank] = (tree_xor(B,curr_leaves[0][0]+2,curr_leaves[1][0]))
+          indices.append([curr_leaves[0][0]+2,curr_leaves[1][0]])
+        rank += 1
+      
+      else: # more than 2
+        for i in range(curr_ct-1):
+          basis[rank] = (tree_xor(B,curr_leaves[0][0],curr_leaves[i+1][0]))
+          indices.append([curr_leaves[0][0],curr_leaves[i+1][0]])
+          rank += 1
+        basis[rank] = (tree_xor(B,curr_leaves[1][0],curr_leaves[2][0]))
+        indices.append([curr_leaves[1][0],curr_leaves[2][0]])
+        rank += 1
+      for i in curr_leaves[1:]:
+        B[:,i[0]] = 0
       basis, rank, indices  = basis_tree(B,basis,rank,indices)
 
     return basis, rank, indices

@@ -15,7 +15,7 @@ sudo pip install -r requirements.txt
 ```
 Illustrative vignettes will be added to this repository as it is updated and commented.
 
-## Citation (note: not yet available)
+## Citation
 ```
 @inproceedings{
 dusterwald2025,

@@ -9,4 +9,4 @@ scikit-learn
 scanpy
 torch
 treelib
-jax
+"jax[cuda12]"
