@@ -2,5 +2,6 @@
 __pycache__
 .DS_Store
 helper.py
-data/*
+data/neural/*
 ali_data.ipynb
+image/*

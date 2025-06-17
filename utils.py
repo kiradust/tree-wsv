@@ -711,7 +711,7 @@ def basis_tree_rnd(B,basis=0,rank=0,indices=[],key = random.PRNGKey(0)):
         ind_perm = random.permutation(key,curr_ct)
         for i in ind_perm[1:]:
             B[:,curr_leaves[i][0]] = 0
-      basis, rank, indices  = basis_tree(B,basis,rank,indices)
+      basis, rank, indices  = basis_tree_rnd(B,basis,rank,indices)
 
     return basis, rank, indices
 
@@ -770,7 +770,7 @@ def basis_tree_legacy(B,basis=0,rank=0,indices=[]):
         rank += 1
       for i in curr_leaves[1:]:
         B[:,i[0]] = 0
-      basis, rank, indices  = basis_tree(B,basis,rank,indices)
+      basis, rank, indices  = basis_tree_legacy(B,basis,rank,indices)
 
     return basis, rank, indices
 
@@ -799,6 +799,9 @@ def difference_subset(newa,ij_a,a_up_tri,b_z_dense,filename,save=True):
 
 
 def alt_twd(w,B,A):
+    """
+    returns the distance matrices for the tree using Jax vmap
+    """
     n_samp = A.shape[0]
     distances = np.zeros((n_samp,n_samp))
     
